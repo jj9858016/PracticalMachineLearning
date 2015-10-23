@@ -1,25 +1,95 @@
 ---
-title: "Project1"
-author: "Jonas Johansson"
-date: "Wednesday, October 21, 2015"
-output: html_document
+title: "Practical Machine Learning"
+
 ---
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+###Objective
+The objective is that given the input data try to create a model which can predict the classe variable.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+library(ggplot2)
+library(data.table)
+library(caret)
+```
+
+###Data retrieval and splitting
+
+Load data and split training data into two: 60% for training and the rest for validation.
+
+```{r results="hide"}
+
+train.raw = fread("pml-training-1.csv")
+test.raw = fread("pml-testing.csv")
+
+# turn response variable into factor variable
+train.raw[,classe:=as.factor(classe)]
+
+idxTrain = createDataPartition(train.raw$classe, p=0.6)[[1]]
+train=train.raw[idxTrain,]
+validation = train.raw[-idxTrain,]
+
+```
+
+###Data cleaning
 
 ```{r}
 
+# remove first seven columns which don't make sense as input
+train = train[,!(1:7),with=F]
 
+# remove columns with mostly nan-values
+naCols = train[,lapply(train,function(x) sum(is.na(x))/.N)>0.05]
 
-summary(cars)
+train = train[,!naCols,with=F]
+
+# exclude near zero variance columns
+zeroVarCols = nearZeroVar(train)
+
+train = train[,!zeroVarCols,with=F]
+validation = validation[,names(train),with=F]
+
 ```
 
-You can also embed plots, for example:
+###Model estimation
 
-```{r, echo=FALSE}
-plot(cars)
+I've decided to try linear discriminant analysis and random forests.Use 5-fold crossvalidation in both cases.
+
+#####Linear discriminant analysis
+```{r cache=TRUE}
+
+lda.model <- train(classe ~ ., data=as.data.frame(train), method="lda",trControl=trainControl(method="cv", 5))
+lda.model
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+#####Random Forest
+```{r cache=TRUE}
+
+rf.model <- train(classe ~ ., data=as.data.frame(train), method="rf",trControl=trainControl(method="cv", 5))
+rf.model
+```
+
+###Evaluation and model selection
+```{r}
+
+confusionMatrix(predict(lda.model,validation),validation[,classe])
+
+confusionMatrix(predict(rf.model,validation),validation[,classe])
+```
+
+The random forest model seem to make a much better job than the linear discriminant analysis with an accuracy of 99.8 vs 70.4%. Therefore I select the random forest model for making predictions on the test sample.
+
+####Retrain the selected model on the entire dataset
+```{r cache=TRUE}
+
+allData = train.raw[,names(train),with=F]
+final.model <- train(classe ~ ., data=as.data.frame(allData), method="rf",trControl=trainControl(method="cv", 5))
+final.model
+```
+
+###Make test set predictions
+``` {r}
+cols = head(names(train),-1)
+test = test.raw[,cols,with=F]
+predictions = predict(final.model,test)
+
+```
